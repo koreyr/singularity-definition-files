@@ -1,0 +1,120 @@
+Bootstrap: docker
+From: nvidia/cuda:11.7.0-devel-rockylinux8
+
+%environment
+	export PATH=/usr/local/bin:$PATH
+        export PATH="/usr/share/bin/:$PATH"
+        export LIBRARY_PATH="/usr/share/lib/:$LIBRARY_PATH"
+        export LD_LIBRARY_PATH="/usr/share/lib/:$LD_LIBRARY_PATH"
+        export PLUMED_KERNEL="/usr/share/lib/libplumedKernel.so"
+
+%post
+    cd /opt
+    dnf -y install epel-release dnf-utils
+        dnf config-manager --set-enabled powertools
+        dnf -y update
+        dnf -y install vim-enhanced git file make cmake patch which file ninja-build \
+               ccache gcc-c++ gcc-gfortran clang libomp-devel gdb valgrind libubsan libasan libtsan \
+               eigen3-devel openblas-devel libpng-devel libjpeg-devel platform-python-devel \
+               openmpi-devel mpich-devel fftw-devel voro++-devel gsl-devel hdf5-devel \
+               netcdf-devel netcdf-cxx-devel netcdf-mpich-devel netcdf-openmpi-devel \
+               enchant python3-virtualenv doxygen diffutils latexmk readline-devel \
+               texlive-latex-fonts texlive-pslatex texlive-collection-latexrecommended \
+               texlive-latex texlive-latexconfig doxygen-latex texlive-collection-latex \
+               texlive-latex-bin texlive-lualatex-math texlive-fncychap texlive-tabulary \
+               texlive-framed texlive-wrapfig texlive-upquote texlive-capt-of \
+               texlive-needspace texlive-titlesec texlive-anysize texlive-dvipng \
+               blas-devel lapack-devel libyaml-devel \
+               zstd libzstd-devel wget zlib-devel 
+        dnf clean all
+        # we need to reset any module variables
+        # inherited from the host.
+        unset __LMOD_REF_COUNT__LMFILES_
+        unset __LMOD_REF_COUNT_PATH
+        unset __LMOD_REF_COUNT_LD_LIBRARY_PATH
+        unset __LMOD_REF_COUNT_MANPATH
+        unset __LMOD_REF_COUNT_MODULEPATH
+        unset __LMOD_REF_COUNT_LOADEDMODULES
+        unset _LMFILES_
+        unset MODULEPATH
+        unset MODULESHOME
+        unset MODULEPATH_ROOT
+        unset LOADEDMODULES
+        unset LMOD_SYSTEM_DEFAULT_MODULES
+
+        # load MPI by default
+        . /etc/profile
+        module load mpi
+
+        # manually install Plumed
+        mkdir plumed
+        cd plumed
+        version=v2.8
+        git clone -b ${version} https://github.com/plumed/plumed2 /opt/plumed
+        cd /opt/plumed
+        ./configure --enable-modules=all --prefix=/usr/share
+        make -j 32
+        make install
+        make clean 
+        ldconfig
+
+        export PATH="/usr/share/bin/:$PATH"
+        export LIBRARY_PATH="/usr/share/lib/:$LIBRARY_PATH"
+        export LD_LIBRARY_PATH="/usr/share/lib/:$LD_LIBRARY_PATH"
+        export PLUMED_KERNEL="/usr/share/lib/libplumedKernel.so"
+
+        git clone https://github.com/gromacs/gromacs /opt/gromacs
+        cd /opt/gromacs
+        git fetch --tags && git checkout v2022.3
+        /bin/bash -c "source /opt/plumed/sourceme.sh"
+        echo 4 | plumed patch  -p 
+        mkdir build_s build_d build_gpu
+        cd /opt/gromacs/build_s
+        cmake .. -DGMX_MPI=on -DGMX_DOUBLE=OFF -DGMX_SIMD=AVX_512 -DGMX_DEFAULT_SUFFIX=OFF -DGMX_BINARY_SUFFIX=_s -DGMX_LIBS_SUFFIX=_s 
+        make -j 32 install
+        make clean
+        cd ../build_d
+        cmake .. -DGMX_MPI=on -DGMX_DOUBLE=ON -DGMX_SIMD=AVX_512 -DGMX_DEFAULT_SUFFIX=OFF -DGMX_BINARY_SUFFIX=_d -DGMX_LIBS_SUFFIX=_d 
+        make -j 32 install
+        make clean
+        cd ../build_gpu
+        cmake .. -DGMX_MPI=on -DGMX_GPU=CUDA -DGMX_SIMD=AVX_512 -DGMX_DEFAULT_SUFFIX=OFF -DGMX_BINARY_SUFFIX=_gpu -DGMX_LIBS_SUFFIX=_gpu
+        make -j 32 install
+        make clean
+
+        ln -s /usr/local/gromacs/bin/gmx_gpu /usr/bin/gmx_gpu
+        ln -s /usr/local/gromacs/bin/gmx_s /usr/bin/gmx_s
+        ln -s /usr/local/gromacs/bin/gmx_d /usr/bin/gmx_d
+
+%environment
+        LC_ALL=C
+        export LC_ALL
+
+        # we need to reset any module variables
+        # inherited from the host.
+        unset __LMOD_REF_COUNT__LMFILES_
+        unset __LMOD_REF_COUNT_PATH
+        unset __LMOD_REF_COUNT_LD_LIBRARY_PATH
+        unset __LMOD_REF_COUNT_MANPATH
+        unset __LMOD_REF_COUNT_MODULEPATH
+        unset __LMOD_REF_COUNT_LOADEDMODULES
+        unset _LMFILES_
+        unset MODULEPATH
+        unset MODULESHOME
+        unset MODULEPATH_ROOT
+        unset LOADEDMODULES
+        unset LMOD_SYSTEM_DEFAULT_MODULES
+
+        # load MPI by default
+        . /etc/profile
+        module load mpi
+        # tell OpenMPI to not try using Infiniband
+        OMPI_MCA_btl="^openib"
+        # do not warn about unused components as this messes up testing
+        OMPI_MCA_btl_base_warn_component_unused="0"
+        export OMPI_MCA_btl OMPI_MCA_btl_base_warn_component_unused
+
+
+%runscript
+
+	"$@"
